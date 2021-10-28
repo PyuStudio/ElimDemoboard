@@ -43,11 +43,6 @@ typedef enum {
 } BM43Error;
 
 
-typedef struct {
-    uint8_t         bytes;
-    uint32_t        timeout;
-    uint8_t         buf[USB_DATA_BUFFER_SIZE];
-} UsbDataToHost;
 
 
 typedef struct {
@@ -82,33 +77,6 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-UsbDataToHost usb_data_to_host[USB_DATA_BUFFER_COUNT] =
-{
-    0
-};
-
-
-UsbDataToHost usb_data_from_uart =
-{
-    0
-};
-
-
-UsbDataToHost usb_data_from_resp =
-{
-    0
-};
-
-UsbDataToHost uart_data =
-{
-    2, 0L, "# "
-};
-
-UsbDataToHost debug_data =
-{
-    2, 0L, "% "
-};
-
 
 __IO uint8_t usb_data_index = 0;
 
@@ -118,7 +86,6 @@ IicHandle iic;
 uint8_t sensor_status;
 static __IO uint8_t evt_usb = 0;
 static __IO uint32_t elim_deactive_clk = 0;
-uint8_t uart2_char;
 
 /* USER CODE END PV */
 
@@ -129,37 +96,27 @@ static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-__STATIC_INLINE void transmit_uart(uint8_t * data, uint16_t bytes);
 
+static uint8_t debug_s[256];
+static uint8_t debug_i = 0;
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#ifdef __GNUC__
-
-/* With GCC/RAISONANCE, small printf (option LD Linker->Libraries->Small printf set to 'Yes') calls __io_putchar() */
-#define PUTCHAR_PROTOTYPE       int __io_putchar(int ch)
-
-#else
-
-#define PUTCHAR_PROTOTYPE       int fputc(int ch, FILE *f)
-#endif /* __GNUC__ */
-
-PUTCHAR_PROTOTYPE
+int fputc(int ch, FILE *f)
 {
     /* Place your implementation of fputc here */
     /*  */
     HAL_UART_Transmit(&huart1, (uint8_t *) &ch, 1, 0xFFFF);
-    debug_data.buf[debug_data.bytes] = ch;
-    debug_data.bytes++;
 
-    if (debug_data.bytes > 1 && ch == '\n') {
-        transmit_uart(debug_data.buf, debug_data.bytes);
-        debug_data.buf[0] = '%';
-        debug_data.buf[1] = ' ';
-        debug_data.bytes = 2;
+    debug_s[debug_i] = ch;
+    debug_i++;
+    if( ch == '\n' ){
+        CDC_Transmit_FS(debug_s, debug_i);
+        debug_i = 0;
     }
+    
     return ch;
 }
 
@@ -184,137 +141,32 @@ void deactive_elim()
 }
 
 
-void cache_usb_data(uint8_t * data, uint8_t bytes)
-{
-    uint8_t index;
-
-    if (usb_data_to_host[usb_data_index].bytes == 0) {
-        index = usb_data_index;
-    }
-    else {
-        index = usb_data_index + 1;
-
-        if (index == USB_DATA_BUFFER_COUNT)
-            index = 0;
-    }
-
-    if (usb_data_to_host[index].bytes) {
-        // the fifo is full
-    }
-    else {
-        memcpy(usb_data_to_host[index].buf, data, bytes);
-        usb_data_to_host[index].bytes = bytes;
-        usb_data_to_host[index].timeout = HAL_GetTick() + 25;
-    }
-
-}
-
-
-
-__STATIC_INLINE void transmit_data(UsbDataToHost * data)
-{
-    if (usb_data_to_host[usb_data_index].bytes) {
-        // cache data because the fifo is not empty
-        cache_usb_data(data->buf, data->bytes);
-    }
-    else {
-        // try to send data to host immediately
-        if (CDC_Transmit_FS(data->buf, data->bytes) != USBD_OK) {
-            cache_usb_data(data->buf, data->bytes);
-        }
-    }
-
-    data->bytes = 0;
-}
-
-
-__STATIC_INLINE void transmit_usb()
-{
-    uint8_t index;
-    
-    HAL_TIM_Base_Stop_IT(&htim2);
-
-    index = usb_data_index;
-
-    while (1) {
-        if (usb_data_to_host[index].bytes) {
-            if (HAL_GetTick() > usb_data_to_host[index].timeout) {
-                // timeout
-                CDC_Transmit_FS(usb_data_to_host[index].buf, usb_data_to_host[index].bytes);
-                memcpy(usb_data_from_uart.buf, "timeout", 7);
-                usb_data_from_uart.bytes = 7;
-    
-                usb_data_to_host[index].bytes = 0;
-            }
-            else{
-                // there's something to send
-                if (CDC_Transmit_FS(usb_data_to_host[index].buf, usb_data_to_host[index].bytes) == USBD_OK) {
-                    usb_data_to_host[index].bytes = 0;
-                }
-                else {
-                    // send data failed
-                    usb_data_index = index;
-                    break;
-                }
-            }
-
-            // move index to next buffer
-            index++;
-
-            if (index == USB_DATA_BUFFER_COUNT)
-                index = 0;
-        }
-        else {
-            usb_data_index = index;
-            break;
-        }
-    };
-
-    transmit_data(&usb_data_from_resp);
-
-    transmit_data(&usb_data_from_uart);
-    
-    if (usb_data_to_host[usb_data_index].bytes){
-        HAL_TIM_Base_Start_IT(&htim2);
-    }
-}
-
-
 __STATIC_INLINE void transmit_resp(uint8_t * data, uint16_t bytes)
 {    
-    HAL_TIM_Base_Stop_IT(&htim2);
-    
-    memcpy(usb_data_from_resp.buf + usb_data_from_resp.bytes, data, bytes);
-    usb_data_from_resp.bytes += bytes;
-    
-    HAL_TIM_Base_Start_IT(&htim2);
+    uint32_t clk = HAL_GetTick() + 500;
+    while(HAL_GetTick() < clk){
+        if(CDC_Transmit_FS(data, bytes) == USBD_OK){
+            break;
+        }
+    }
 }
-
-__STATIC_INLINE void transmit_uart(uint8_t * data, uint16_t bytes)
-{    
-    HAL_TIM_Base_Stop_IT(&htim2);
-    
-    memcpy(usb_data_from_uart.buf, data, bytes);
-    usb_data_from_uart.bytes = bytes;
-
-    HAL_TIM_Base_Start_IT(&htim2);
-}
-
 
 
 void response_data(uint8_t * data, uint16_t size)
 {
-    UsbDataToHost pack;
+    uint8_t buf[32];
+    uint8_t bytes = 0;
+;
 
-    sprintf((char *) pack.buf, "$%d\r\n", size);
-    pack.bytes = strlen((char *)pack.buf);
+    sprintf((char *) buf, "$%d\r\n", size);
+    bytes = strlen((char *)buf);
 
-    memcpy(pack.buf + pack.bytes, data, size);
-    pack.bytes += size;
+    memcpy(buf + bytes, data, size);
+    bytes += size;
     
-    strcpy((char *)pack.buf + pack.bytes, "\r\n");
-    pack.bytes += 2;
-    transmit_resp(pack.buf, pack.bytes);
+    strcpy((char *)buf + bytes, "\r\n");
+    bytes += 2;
+    transmit_resp(buf, bytes);
 }
 
 
@@ -618,19 +470,6 @@ void firmware()
 }
 
 
-void hello()
-{
-    if (getCommandFieldsCount() == 1) {
-        const char * p = "hi, i'm Elim Commboard.";
-
-        response_data((uint8_t *) p, strlen(p));
-    }
-    else {
-        response_error("hello");
-    }
-}
-
-
 void NotifyUsbCommandEvent(void)
 {
     evt_usb = 1;
@@ -673,11 +512,12 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_Base_Start_IT(&htim2);
+  
     iic.scl_pin = SCL_Pin;
     iic.scl_port = SCL_GPIO_Port;
     iic.sda_pin = GPIO_PIN_1;
     iic.sda_port = SDA_GPIO_Port;
-    HAL_UART_Receive_IT(&huart2, &uart2_char, 1);
 
   /* USER CODE END 2 */
 
@@ -789,7 +629,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
+  htim2.Init.Prescaler = 999;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 1999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -991,16 +831,8 @@ static void MX_GPIO_Init(void)
   */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef * huart)
 {
-    uart_data.buf[uart_data.bytes] = uart2_char;
-    uart_data.bytes++;
 
-    if (uart_data.bytes > 1 && uart2_char == '\n') {
-        transmit_uart(uart_data.buf, uart_data.bytes);
-        uart_data.buf[0] = '#';
-        uart_data.buf[1] = ' ';
-        uart_data.bytes = 2;
-    }
-    HAL_UART_Receive_IT(&huart2, &uart2_char, 1);
+
 }
 
 
@@ -1038,8 +870,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   /* USER CODE BEGIN Callback 1 */
     if (htim->Instance == TIM2) {
         HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
-        transmit_usb();
         // RESP_ERR_OVER_LOAD;
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
     }
 
   /* USER CODE END Callback 1 */
