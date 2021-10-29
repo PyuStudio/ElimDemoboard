@@ -61,7 +61,21 @@ typedef struct {
 #define RESP_ERR_BUSY           response_error("busy")
 #define RETRY                   80
 
-#define USB_DATA_BUFFER_COUNT   50
+
+#define TURN_ON_D2_RED          HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET)
+#define TURN_ON_D3_GREEN        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET)
+#define TURN_ON_D4_BLUE         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET)
+#define TURN_ON_D5_ORANGE       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET)
+#define TURN_ON_PC13            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET)
+
+
+#define TURN_OFF_D2_RED          HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET)
+#define TURN_OFF_D3_GREEN        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET)
+#define TURN_OFF_D4_BLUE         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET)
+#define TURN_OFF_D5_ORANGE       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
+#define TURN_OFF_PC13            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET)
+
+
 
 /* USER CODE END PD */
 
@@ -77,9 +91,6 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
-__IO uint8_t usb_data_index = 0;
-
 
 uint8_t bm43_addr = 0x5E;
 IicHandle iic;
@@ -97,8 +108,6 @@ static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
-static uint8_t debug_s[256];
-static uint8_t debug_i = 0;
 
 /* USER CODE END PFP */
 
@@ -109,13 +118,6 @@ int fputc(int ch, FILE *f)
     /* Place your implementation of fputc here */
     /*  */
     HAL_UART_Transmit(&huart1, (uint8_t *) &ch, 1, 0xFFFF);
-
-    debug_s[debug_i] = ch;
-    debug_i++;
-    if( ch == '\n' ){
-        CDC_Transmit_FS(debug_s, debug_i);
-        debug_i = 0;
-    }
     
     return ch;
 }
@@ -334,6 +336,7 @@ void execute_iic(uint8_t * params, uint8_t param_bytes, uint8_t bytes_want, IicR
 
 
     active_elim();
+    TURN_ON_D5_ORANGE;
 
     result->code = 0;
 
@@ -357,6 +360,7 @@ void execute_iic(uint8_t * params, uint8_t param_bytes, uint8_t bytes_want, IicR
             }
         }
     }
+    TURN_OFF_D5_ORANGE;
 
     result->code = iic_err;
 }
@@ -460,7 +464,7 @@ void write_user_data()
 void firmware()
 {
     if (getCommandFieldsCount() == 1) {
-        const char * p = "ver 0.3, build 0811-1423";
+        const char * p = "DemoBoard, ver 0.4, build 0811-1423";
 
         response_data((uint8_t *) p, strlen(p));
     }
@@ -512,6 +516,10 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  TURN_OFF_D4_BLUE;
+  TURN_OFF_D2_RED;
+  TURN_OFF_D5_ORANGE;
+  TURN_OFF_PC13;
   HAL_TIM_Base_Start_IT(&htim2);
   
     iic.scl_pin = SCL_Pin;
@@ -533,6 +541,7 @@ int main(void)
 
                 while (parseCommand() == WITH_COMMAND) {
                     printf("recv cmd: %s\r\n", getCommandField(0));
+                    TURN_ON_PC13;
 
                     if (isCommand((uint8_t *) "firmware")) {
                         firmware();
@@ -545,6 +554,7 @@ int main(void)
                         write_user_data();
                     }
 
+                    TURN_OFF_PC13;
 
                     consumeCommand();
                 }
@@ -555,8 +565,6 @@ int main(void)
 
         if (HAL_GetTick() > blink) {
             blink = HAL_GetTick() + 250;
-
-            HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
         }
 
     /* USER CODE END WHILE */
@@ -845,8 +853,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef * huart)
   */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    GPIO_PinState state = HAL_GPIO_ReadPin(GPIOA, GPIO_Pin);
-    HAL_GPIO_WritePin(GPIOB, GPIO_Pin, state == GPIO_PIN_SET ? GPIO_PIN_RESET : GPIO_PIN_SET);
 }
 
 /* USER CODE END 4 */
@@ -869,9 +875,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   }
   /* USER CODE BEGIN Callback 1 */
     if (htim->Instance == TIM2) {
-        HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
+        // HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
         // RESP_ERR_OVER_LOAD;
-        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6);
+        // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
     }
 
   /* USER CODE END Callback 1 */
