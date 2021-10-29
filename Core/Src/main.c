@@ -35,12 +35,12 @@
 
 
 typedef enum {
-    BM43_ERR_NONE = IIC_ERR_NONE, 
-    BM43_ERR_NO_ACK = IIC_ERR_NO_ACK, 
-    BM43_ERR_OVER_LOAD = IIC_ERR_OVER_LOAD, 
-    BM43_ERR_TIMEOUT = (uint16_t) (-3), 
-    BM43_ERR_BUSY = (uint16_t) (-4), 
-} BM43Error;
+    ELIM_ERR_NONE = IIC_ERR_NONE, 
+    ELIM_ERR_NO_ACK = IIC_ERR_NO_ACK, 
+    ELIM_ERR_OVER_LOAD = IIC_ERR_OVER_LOAD, 
+    ELIM_ERR_TIMEOUT = (uint16_t) (-3), 
+    ELIM_ERR_BUSY = (uint16_t) (-4), 
+} ELIMError;
 
 
 
@@ -92,12 +92,12 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
-uint8_t bm43_addr = 0x5E;
+uint8_t elim_addr = 0x5E;
 IicHandle iic;
 uint8_t sensor_status;
 static __IO uint8_t evt_usb = 0;
 static __IO uint32_t elim_deactive_clk = 0;
-
+uint8_t led_off_count =0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -224,20 +224,20 @@ uint32_t text_2_number(uint8_t * text)
 
 
 
-__STATIC_INLINE uint16_t BM43_read_status(IicHandle * hi2c)
+__STATIC_INLINE uint16_t elim_read_status(IicHandle * hi2c)
 {
 
-    return iic_read(bm43_addr | 0x01, &sensor_status, 1, hi2c);
+    return iic_read(elim_addr | 0x01, &sensor_status, 1, hi2c);
 }
 
 
-static uint8_t BM43_wait_ready(IicHandle * hi2c)
+static uint8_t elim_wait_ready(IicHandle * hi2c)
 {
     uint8_t ret = 0;
     int i = 0;
 
     while (1) {
-        ret = BM43_read_status(hi2c);
+        ret = elim_read_status(hi2c);
 
         if (ret == IIC_ERR_NONE && (sensor_status & 0x01) == 0) {
             // busy bit is cleared, chip is ready
@@ -260,7 +260,7 @@ static uint8_t BM43_wait_ready(IicHandle * hi2c)
 }
 
 
-BM43Error BM43_reset()
+ELIMError elim_reset()
 {
     uint8_t cmd[3] = {
         0x00, 0x00, 0x00
@@ -270,10 +270,10 @@ BM43Error BM43_reset()
 #if 0
     HAL_GPIO_WritePin(_CS_GPIO_Port, _CS_Pin, GPIO_PIN_RESET);
     HAL_Delay(5);
-    HAL_GPIO_WritePin(BM43_VDD_GPIO_Port, BM43_VDD_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(ELIM_VDD_GPIO_Port, ELIM_VDD_Pin, GPIO_PIN_SET);
     HAL_Delay(1);
 
-    if (bm43_mode == BM43_MODE_CM) {
+    if (elim_mode == ELIM_MODE_CM) {
         cmd[0] = 0xA9;
     }
 
@@ -288,13 +288,13 @@ BM43Error BM43_reset()
 
         if (iic_err == IIC_ERR_NONE) {
             printf("chip addr is:%x\r\n", addr);
-            bm43_addr = addr << 1;
+            elim_addr = addr << 1;
 
-            if (BM43_wait_ready(&hi2c1)) {
-                return BM43_ERR_TIMEOUT;
+            if (elim_wait_ready(&hi2c1)) {
+                return ELIM_ERR_TIMEOUT;
             }
 
-            return BM43_ERR_NONE;
+            return ELIM_ERR_NONE;
         }
 
     }
@@ -302,7 +302,7 @@ BM43Error BM43_reset()
     sensor_status = 0x9D;                           // 0b10011101 0: Not powered on; 0: not busy; 11: unknonw mode; 1: memory error; 0: sm config 1; 1: ALU saturation
 #endif
 
-    return BM43_ERR_NONE;
+    return ELIM_ERR_NONE;
 }
 
 
@@ -342,20 +342,20 @@ void execute_iic(uint8_t * params, uint8_t param_bytes, uint8_t bytes_want, IicR
 
     if (params[0] == 0xFF) {
         // chip reset request
-        iic_err = BM43_reset();
+        iic_err = elim_reset();
         result->data[0] = sensor_status;
     }
     else {
         // execute iic read/write
-        iic_err = iic_write(bm43_addr, params, param_bytes, (void *) &iic);
+        iic_err = iic_write(elim_addr, params, param_bytes, (void *) &iic);
 
         if (bytes_want) {
             if (iic_err == IIC_ERR_NONE) {
-                if (BM43_wait_ready(&iic)) {
-                    iic_err = BM43_ERR_TIMEOUT;
+                if (elim_wait_ready(&iic)) {
+                    iic_err = ELIM_ERR_TIMEOUT;
                 }
                 else {
-                    iic_err = iic_read(bm43_addr | 1, result->data, bytes_want, (void *) &iic);
+                    iic_err = iic_read(elim_addr | 1, result->data, bytes_want, (void *) &iic);
                 }
             }
         }
@@ -381,11 +381,11 @@ void read_user_data()
 
         switch (result.code)
         {
-            case BM43_ERR_NONE:
+            case ELIM_ERR_NONE:
                 response_data(result.data, 6);
                 break;
 
-            case BM43_ERR_NO_ACK:
+            case ELIM_ERR_NO_ACK:
                 RESP_ERR_NO_ACK;
                 break;
 
@@ -393,11 +393,11 @@ void read_user_data()
                 RESP_ERR_OVER_LOAD;
                 break;
 
-            case BM43_ERR_TIMEOUT:
+            case ELIM_ERR_TIMEOUT:
                 RESP_ERR_TIMEOUT;
                 break;
 
-            case BM43_ERR_BUSY:
+            case ELIM_ERR_BUSY:
                 RESP_ERR_BUSY;
                 break;
 
@@ -430,11 +430,11 @@ void write_user_data()
 
         switch (result.code)
         {
-            case BM43_ERR_NONE:
+            case ELIM_ERR_NONE:
                 response_data(result.data, 1);
                 break;
 
-            case BM43_ERR_NO_ACK:
+            case ELIM_ERR_NO_ACK:
                 RESP_ERR_NO_ACK;
                 break;
 
@@ -442,11 +442,11 @@ void write_user_data()
                 RESP_ERR_OVER_LOAD;
                 break;
 
-            case BM43_ERR_TIMEOUT:
+            case ELIM_ERR_TIMEOUT:
                 RESP_ERR_TIMEOUT;
                 break;
 
-            case BM43_ERR_BUSY:
+            case ELIM_ERR_BUSY:
                 RESP_ERR_BUSY;
                 break;
 
@@ -543,6 +543,7 @@ int main(void)
                     printf("recv cmd: %s\r\n", getCommandField(0));
                     TURN_ON_PC13;
 
+
                     if (isCommand((uint8_t *) "firmware")) {
                         firmware();
                     }
@@ -554,10 +555,10 @@ int main(void)
                         write_user_data();
                     }
 
-                    TURN_OFF_PC13;
 
                     consumeCommand();
                 }
+                led_off_count = 2; 
             }
         }
 
@@ -875,6 +876,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   }
   /* USER CODE BEGIN Callback 1 */
     if (htim->Instance == TIM2) {
+        if( led_off_count ){
+            led_off_count--;
+            if( led_off_count == 0 ){
+            TURN_OFF_PC13;
+            }
+        }
         // HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin);
         // RESP_ERR_OVER_LOAD;
         // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
